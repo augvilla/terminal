@@ -268,14 +268,13 @@ elif go or typed:
 
 if st.session_state.bar_error:
     st.warning(st.session_state.bar_error)
-
-st.write("")
-
-cmd = registry.get(st.session_state.active_command)
-if cmd is None or not cmd.implemented:
-    st.info(
-        f"{st.session_state.active_command} IS IN THE VOCABULARY BUT NOT BUILT YET. "
-        "TYPE MENU TO SEE WHAT IS LIVE."
-    )
 else:
-    cmd.handler(st.session_state.active_ticker)
+    st.write("")
+    cmd = registry.get(st.session_state.active_command)
+    if cmd is None or not cmd.implemented:
+        st.info(
+            f"{st.session_state.active_command} IS IN THE VOCABULARY BUT NOT BUILT YET. "
+            "TYPE MENU TO SEE WHAT IS LIVE."
+        )
+    else:
+        cmd.handler(st.session_state.active_ticker)
