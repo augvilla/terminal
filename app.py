@@ -28,7 +28,7 @@ st.markdown("""
     .stApp { background-color: #000000; color: #FF8C00; }
     section[data-testid="stSidebar"] { display: none; }
     header[data-testid="stHeader"] { background-color: #000000; }
-    div.block-container { padding-top: 1.1rem; max-width: 1500px; }
+    div.block-container { padding-top: 3.2rem; max-width: 1500px; }
 
     h1, h2, h3, h4, h5, h6 { color: #FF8C00 !important; letter-spacing: 0.5px; }
     p, span, label, .stMarkdown, .stCaption { color: #FFB84D !important; }
@@ -39,7 +39,9 @@ st.markdown("""
         font-weight: 700;
         font-size: 1.55rem;
         letter-spacing: 3px;
-        margin-top: 0.3em;
+        margin-top: 0.5em;
+        padding-top: 4px;
+        line-height: 1.4;
     }
     .term-sub {
         color: #7A5A2E !important;
@@ -73,8 +75,10 @@ st.markdown("""
         font-family: 'IBM Plex Mono', monospace !important;
         font-weight: 600;
         letter-spacing: 1px;
+        text-transform: uppercase;
         caret-color: #FF8C00;
     }
+    .stTextInput input::placeholder { text-transform: uppercase; }
     .stTextInput input:focus {
         box-shadow: 0 0 0 1px #FF8C00 !important;
         border: 1px solid #FFB84D !important;
@@ -247,7 +251,7 @@ with st.container(border=True):
     with c1:
         st.markdown('<div class="term-label">Command</div>', unsafe_allow_html=True)
         typed = st.text_input(
-            "Command", key="command_input", placeholder="E.G.  AAPL SNAP",
+            "Command", key="command_input", placeholder="TICKER THEN COMMAND  —  E.G.  AAPL SNAP",
             label_visibility="collapsed",
         )
     with c2:
@@ -259,7 +263,7 @@ with st.container(border=True):
 
     active = registry.get(st.session_state.active_command)
     crumb = f"{st.session_state.active_ticker}  \u203a  " if st.session_state.active_ticker else ""
-    st.caption(f"{crumb}{active.code} \u2014 {active.title.upper()}   |   TYPE MENU FOR ALL COMMANDS, HELP FOR SYNTAX")
+    st.caption(f"{crumb}{active.code} \u2014 {active.title.upper()}   |   ORDER: TICKER THEN COMMAND   |   MENU FOR ALL COMMANDS, HELP FOR SYNTAX")
 
 if menu_clicked:
     run_command("MENU")
