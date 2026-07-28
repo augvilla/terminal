@@ -6,11 +6,12 @@ itself. Keep them self-contained — the router knows nothing about their
 internals.
 """
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+import plotly.graph_objects as go
 
 import registry
 
@@ -175,6 +176,358 @@ def screen_snap(ticker: str):
 
 
 # --------------------------------------------------------------------------
+# CHART -- price history
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_history(ticker, start, end):
+    df = yf.download(ticker, start=start, end=end + timedelta(days=1),
+                      progress=False, auto_adjust=True)
+    if df.empty:
+        return pd.Series(dtype=float)
+    close = df["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+    return close
+
+
+def screen_chart(ticker):
+    screen_title(f"{ticker} \u2014 Price Chart")
+
+    default_start = date(date.today().year, 1, 1)
+    default_end = date.today()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="term-label">Start Date</div>', unsafe_allow_html=True)
+        start_date = st.date_input("Start", value=default_start, max_value=default_end,
+                                    key=f"chart_start_{ticker}", label_visibility="collapsed")
+    with c2:
+        st.markdown('<div class="term-label">End Date</div>', unsafe_allow_html=True)
+        end_date = st.date_input("End", value=default_end, max_value=default_end,
+                                  key=f"chart_end_{ticker}", label_visibility="collapsed")
+
+    if start_date >= end_date:
+        st.warning("START DATE MUST BE BEFORE END DATE.")
+        return
+
+    prices = _fetch_history(ticker, start_date, end_date)
+    if prices.empty:
+        st.warning(f"NO PRICE DATA FOR {ticker} IN THAT RANGE.")
+        return
+
+    ret_pct = (prices.iloc[-1] / prices.iloc[0] - 1) * 100
+    cls = "up" if ret_pct > 0 else ("down" if ret_pct < 0 else "")
+    stat_row([
+        ("Start", f"{prices.iloc[0]:,.2f}", ""),
+        ("End", f"{prices.iloc[-1]:,.2f}", "accent"),
+        ("Range Return", f"{ret_pct:+.2f}%", cls),
+        ("Trading Days", f"{len(prices):,}", ""),
+    ])
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=prices.index, y=prices.values, mode="lines",
+                              line=dict(color="#FF1E1E", width=2.2)))
+    fig.update_layout(
+        xaxis=dict(title="DATE", color="#FF8C00", gridcolor="#2a2a2a", griddash="dot",
+                   showline=True, linecolor="#FF8C00"),
+        yaxis=dict(title="PRICE", color="#FF8C00", gridcolor="#2a2a2a", griddash="dot",
+                   showline=True, linecolor="#FF8C00"),
+        showlegend=False, hovermode="x unified", height=520,
+        paper_bgcolor="#000000", plot_bgcolor="#000000",
+        font=dict(family="IBM Plex Mono", color="#FF8C00"),
+        margin=dict(l=10, r=10, t=20, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("QUOTES MAY BE DELAYED  |  ADJUSTED FOR SPLITS AND DIVIDENDS")
+
+
+# --------------------------------------------------------------------------
+# BOOKS -- financial statements
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_financials(ticker):
+    t = yf.Ticker(ticker)
+    return {
+        "income": t.income_stmt,
+        "income_q": t.quarterly_income_stmt,
+        "balance": t.balance_sheet,
+        "balance_q": t.quarterly_balance_sheet,
+        "cashflow": t.cashflow,
+        "cashflow_q": t.quarterly_cashflow,
+    }
+
+
+def _format_statement(df, max_rows=25):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.iloc[:max_rows].copy()
+    out.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else str(c) for c in out.columns]
+    out = out.map(lambda v: _fmt_big(v) if isinstance(v, (int, float)) else v)
+    out.index.name = "Line Item"
+    return out.reset_index()
+
+
+def screen_books(ticker):
+    screen_title(f"{ticker} \u2014 Financial Statements", "Most recent first")
+
+    try:
+        data = _fetch_financials(ticker)
+    except Exception as e:
+        st.warning(f"COULD NOT LOAD FINANCIALS FOR {ticker} \u2014 {e}")
+        return
+
+    period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                       key=f"books_period_{ticker}", label_visibility="collapsed")
+    suffix = "_q" if period == "Quarterly" else ""
+
+    tabs = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
+    keys = [f"income{suffix}", f"balance{suffix}", f"cashflow{suffix}"]
+    for tab, key in zip(tabs, keys):
+        with tab:
+            table = _format_statement(data.get(key))
+            if table.empty:
+                st.info("NO DATA AVAILABLE FOR THIS STATEMENT.")
+            else:
+                st.dataframe(table, use_container_width=True, hide_index=True)
+
+    st.caption("VALUES IN REPORTING CURRENCY  |  SOURCE: YAHOO FINANCE")
+
+
+# --------------------------------------------------------------------------
+# DIV -- dividends
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_dividends(ticker):
+    t = yf.Ticker(ticker)
+    return t.dividends, (t.info or {})
+
+
+def screen_div(ticker):
+    screen_title(f"{ticker} \u2014 Dividends")
+
+    try:
+        divs, info = _fetch_dividends(ticker)
+    except Exception as e:
+        st.warning(f"COULD NOT LOAD DIVIDEND DATA FOR {ticker} \u2014 {e}")
+        return
+
+    yld = info.get("dividendYield")
+    if yld is not None and yld < 1:
+        yld = yld * 100
+    rate = info.get("dividendRate")
+    payout = info.get("payoutRatio")
+    if payout is not None:
+        payout = payout * 100
+    ex_date = info.get("exDividendDate")
+    if ex_date:
+        try:
+            ex_date = datetime.fromtimestamp(ex_date).strftime("%Y-%m-%d")
+        except Exception:
+            ex_date = "\u2014"
+
+    stat_row([
+        ("Yield", f"{yld:.2f}%" if yld else "\u2014", "accent"),
+        ("Annual Rate", f"{rate:,.2f}" if rate else "\u2014", ""),
+        ("Payout Ratio", f"{payout:.1f}%" if payout else "\u2014", ""),
+        ("Ex-Dividend Date", ex_date or "\u2014", ""),
+    ])
+
+    if divs is None or divs.empty:
+        st.info(f"{ticker} HAS NO DIVIDEND HISTORY ON RECORD.")
+        return
+
+    st.markdown('<div class="block-label">Payment History (Most Recent 20)</div>', unsafe_allow_html=True)
+    recent = divs.tail(20).sort_index(ascending=False)
+    table = pd.DataFrame({
+        "Date": [d.strftime("%Y-%m-%d") for d in recent.index],
+        "Amount": [f"{v:,.4f}" for v in recent.values],
+    })
+    st.dataframe(table, use_container_width=True, hide_index=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=divs.index, y=divs.values, marker=dict(color="#FF8C00")))
+    fig.update_layout(
+        xaxis=dict(title="DATE", color="#FF8C00", gridcolor="#2a2a2a", showline=True, linecolor="#FF8C00"),
+        yaxis=dict(title="AMOUNT", color="#FF8C00", gridcolor="#2a2a2a", showline=True, linecolor="#FF8C00"),
+        showlegend=False, height=380,
+        paper_bgcolor="#000000", plot_bgcolor="#000000",
+        font=dict(family="IBM Plex Mono", color="#FF8C00"),
+        margin=dict(l=10, r=10, t=20, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# --------------------------------------------------------------------------
+# EARN -- earnings
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_earnings(ticker):
+    t = yf.Ticker(ticker)
+    try:
+        dates = t.earnings_dates
+    except Exception:
+        dates = None
+    return dates
+
+
+def screen_earn(ticker):
+    screen_title(f"{ticker} \u2014 Earnings")
+
+    try:
+        dates = _fetch_earnings(ticker)
+    except Exception as e:
+        st.warning(f"COULD NOT LOAD EARNINGS DATA FOR {ticker} \u2014 {e}")
+        return
+
+    if dates is None or dates.empty:
+        st.info(f"NO EARNINGS DATA AVAILABLE FOR {ticker}.")
+        return
+
+    dates = dates.sort_index(ascending=False)
+    now = pd.Timestamp.now(tz=dates.index.tz) if dates.index.tz else pd.Timestamp.now()
+    upcoming = dates[dates.index > now]
+    past = dates[dates.index <= now]
+
+    if not upcoming.empty:
+        st.markdown('<div class="block-label">Next Earnings Date</div>', unsafe_allow_html=True)
+        stat_row([("Date", upcoming.index[-1].strftime("%Y-%m-%d"), "accent")])
+
+    st.markdown('<div class="block-label">Recent History (Last 12)</div>', unsafe_allow_html=True)
+    recent = past.head(12).copy()
+    if recent.empty:
+        st.info("NO PAST EARNINGS ON RECORD.")
+        return
+
+    table = pd.DataFrame({"Date": [d.strftime("%Y-%m-%d") for d in recent.index]})
+    for col in ["EPS Estimate", "Reported EPS", "Surprise(%)"]:
+        if col in recent.columns:
+            table[col] = recent[col].map(lambda v: f"{v:,.2f}" if pd.notna(v) else "\u2014")
+    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.caption("SOURCE: YAHOO FINANCE  |  ESTIMATES CAN CHANGE UNTIL REPORTED")
+
+
+# --------------------------------------------------------------------------
+# STREET -- analyst view
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_street(ticker):
+    t = yf.Ticker(ticker)
+    info = t.info or {}
+    try:
+        recs = t.recommendations
+    except Exception:
+        recs = None
+    return info, recs
+
+
+def screen_street(ticker):
+    screen_title(f"{ticker} \u2014 Analyst View")
+
+    try:
+        info, recs = _fetch_street(ticker)
+    except Exception as e:
+        st.warning(f"COULD NOT LOAD ANALYST DATA FOR {ticker} \u2014 {e}")
+        return
+
+    key = info.get("recommendationKey")
+    n_analysts = info.get("numberOfAnalystOpinions")
+    target_mean = info.get("targetMeanPrice")
+    target_high = info.get("targetHighPrice")
+    target_low = info.get("targetLowPrice")
+    current = info.get("currentPrice") or info.get("regularMarketPrice")
+
+    upside = None
+    if target_mean and current:
+        upside = (target_mean / current - 1) * 100
+
+    stat_row([
+        ("Consensus", (key or "\u2014").upper().replace("_", " "), "accent"),
+        ("Mean Target", f"{target_mean:,.2f}" if target_mean else "\u2014", ""),
+        ("Implied Upside", f"{upside:+.1f}%" if upside is not None else "\u2014",
+         "up" if (upside or 0) > 0 else ("down" if (upside or 0) < 0 else "")),
+        ("Analysts", f"{n_analysts:,}" if n_analysts else "\u2014", ""),
+    ])
+
+    st.markdown('<div class="block-label">Price Target Range</div>', unsafe_allow_html=True)
+    rng = pd.DataFrame({
+        "Field": ["Low", "Mean", "High", "Current"],
+        "Value": [
+            f"{target_low:,.2f}" if target_low else "\u2014",
+            f"{target_mean:,.2f}" if target_mean else "\u2014",
+            f"{target_high:,.2f}" if target_high else "\u2014",
+            f"{current:,.2f}" if current else "\u2014",
+        ],
+    })
+    st.dataframe(rng, use_container_width=True, hide_index=True)
+
+    if recs is not None and not recs.empty:
+        st.markdown('<div class="block-label">Recent Rating Changes</div>', unsafe_allow_html=True)
+        recent = recs.tail(15).sort_index(ascending=False).reset_index()
+        st.dataframe(recent, use_container_width=True, hide_index=True)
+    else:
+        st.caption("NO RECENT RATING-CHANGE HISTORY AVAILABLE.")
+
+
+# --------------------------------------------------------------------------
+# NEWS -- headlines
+# --------------------------------------------------------------------------
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _fetch_news(ticker):
+    t = yf.Ticker(ticker)
+    try:
+        return t.news or []
+    except Exception:
+        return []
+
+
+def screen_news(ticker):
+    screen_title(f"{ticker} \u2014 Headlines")
+
+    try:
+        items = _fetch_news(ticker)
+    except Exception as e:
+        st.warning(f"COULD NOT LOAD NEWS FOR {ticker} \u2014 {e}")
+        return
+
+    if not items:
+        st.info(f"NO RECENT HEADLINES FOUND FOR {ticker}.")
+        return
+
+    for item in items[:15]:
+        content = item.get("content", item)
+        title = content.get("title") or item.get("title") or "Untitled"
+        provider = content.get("provider")
+        publisher = provider.get("displayName") if isinstance(provider, dict) else item.get("publisher")
+        canonical = content.get("canonicalUrl")
+        link = canonical.get("url") if isinstance(canonical, dict) else item.get("link")
+        pub_time = content.get("pubDate") or item.get("providerPublishTime")
+
+        when = ""
+        if isinstance(pub_time, (int, float)):
+            try:
+                when = datetime.fromtimestamp(pub_time).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                when = ""
+        elif isinstance(pub_time, str):
+            when = pub_time[:16].replace("T", " ")
+
+        st.markdown(
+            f'<div class="news-item">'
+            f'<a href="{link or "#"}" target="_blank" class="news-title">{title}</a>'
+            f'<div class="news-meta">{publisher or "\u2014"}{"  |  " + when if when else ""}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.caption("SOURCE: YAHOO FINANCE  |  HEADLINES LINK OUT TO THE ORIGINAL PUBLISHER")
+
+
+# --------------------------------------------------------------------------
 # MENU — command index
 # --------------------------------------------------------------------------
 
@@ -270,5 +623,11 @@ Input is case-insensitive. Crypto shorthand expands automatically —
 # --------------------------------------------------------------------------
 
 registry.bind("SNAP", screen_snap)
+registry.bind("CHART", screen_chart)
+registry.bind("BOOKS", screen_books)
+registry.bind("DIV", screen_div)
+registry.bind("EARN", screen_earn)
+registry.bind("STREET", screen_street)
+registry.bind("NEWS", screen_news)
 registry.bind("MENU", screen_menu)
 registry.bind("HELP", screen_help)
