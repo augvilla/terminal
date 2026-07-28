@@ -235,15 +235,21 @@ def screen_help(ticker=None):
 
 <div class="block-label">Syntax</div>
 
-Type a ticker, a command, or both — in either order.
+Order is fixed — <b>ticker first, command second</b>.
 
 <table class="help-table">
+<tr><td><code>AAPL BOOKS</code></td><td>Ticker, then command</td></tr>
 <tr><td><code>AAPL</code></td><td>Ticker alone opens its snapshot</td></tr>
-<tr><td><code>AAPL BOOKS</code></td><td>Ticker plus command</td></tr>
-<tr><td><code>BOOKS AAPL</code></td><td>Same thing — order does not matter</td></tr>
 <tr><td><code>BOOKS</code></td><td>Command alone reuses your last ticker</td></tr>
 <tr><td><code>MACRO</code></td><td>Some screens need no ticker at all</td></tr>
 </table>
+
+<div class="block-label">Why the order is fixed</div>
+
+Plenty of commands are also real ticker symbols — SNAP is Snapchat, and
+DIV, EARN, PORT and HOLD are all listed securities. Position decides which
+is which, so <code>SNAP SNAP</code> reads cleanly as the snapshot screen
+for Snapchat.
 
 <div class="block-label">Finding commands</div>
 
@@ -252,8 +258,8 @@ Commands marked PLANNED exist in the vocabulary but are not built yet.
 
 <div class="block-label">Shortcuts</div>
 
-Crypto shorthand is expanded automatically — <code>BTC</code> becomes
-<code>BTC-USD</code>. Mistyped commands will suggest the closest match.
+Input is case-insensitive. Crypto shorthand expands automatically —
+<code>BTC</code> becomes <code>BTC-USD</code>.
 
 </div>
 """, unsafe_allow_html=True)
