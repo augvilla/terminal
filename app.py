@@ -228,12 +228,6 @@ def run_command(raw: str):
 
     if result.error:
         st.session_state.bar_error = result.error
-        tokens = [t for t in (raw or "").strip().upper().split() if t]
-        unknown = [t for t in tokens if t not in registry.all_codes()]
-        if unknown and result.command is None:
-            hints = router.suggest(unknown[0])
-            if hints:
-                st.session_state.bar_error += f"  Did you mean: {', '.join(hints)}?"
         return
 
     st.session_state.bar_error = None
