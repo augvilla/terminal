@@ -406,34 +406,59 @@ def screen_div(ticker):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_earnings(ticker):
+    """Returns (dates_df_or_None, diagnostic_str). Tries several yfinance
+    paths in order since none of them are reliably populated for every
+    ticker/version — Yahoo has repeatedly tightened this particular
+    endpoint, so silent failures here are common enough to need a paper
+    trail rather than a single blanket try/except."""
     t = yf.Ticker(ticker)
-    dates = None
+    attempts = []
+
     try:
         dates = t.earnings_dates
-    except Exception:
-        pass
-    if dates is None or dates.empty:
-        # The bare property is known to come back empty for some tickers
-        # and yfinance versions even when data exists — the explicit
-        # method call is the more reliable path.
-        try:
-            dates = t.get_earnings_dates(limit=24)
-        except Exception:
-            pass
-    return dates
+        if dates is not None and not dates.empty:
+            return dates, "earnings_dates property"
+        attempts.append("earnings_dates: empty")
+    except Exception as e:
+        attempts.append(f"earnings_dates: {type(e).__name__}")
+
+    try:
+        dates = t.get_earnings_dates(limit=24)
+        if dates is not None and not dates.empty:
+            return dates, "get_earnings_dates(limit=24)"
+        attempts.append("get_earnings_dates: empty")
+    except Exception as e:
+        attempts.append(f"get_earnings_dates: {type(e).__name__}")
+
+    try:
+        cal = t.calendar
+        earn_date = cal.get("Earnings Date") if isinstance(cal, dict) else None
+        if earn_date:
+            d = earn_date[0] if isinstance(earn_date, (list, tuple)) else earn_date
+            df = pd.DataFrame(
+                {"EPS Estimate": [None], "Reported EPS": [None], "Surprise(%)": [None]},
+                index=[pd.Timestamp(d)],
+            )
+            return df, "calendar (upcoming date only, no history)"
+        attempts.append("calendar: no earnings date field")
+    except Exception as e:
+        attempts.append(f"calendar: {type(e).__name__}")
+
+    return None, " | ".join(attempts)
 
 
 def screen_earn(ticker):
     screen_title(f"{ticker} \u2014 Earnings")
 
     try:
-        dates = _fetch_earnings(ticker)
+        dates, diagnostic = _fetch_earnings(ticker)
     except Exception as e:
         st.warning(f"COULD NOT LOAD EARNINGS DATA FOR {ticker} \u2014 {e}")
         return
 
     if dates is None or dates.empty:
         st.info(f"NO EARNINGS DATA AVAILABLE FOR {ticker}.")
+        st.caption(f"TRIED: {diagnostic}")
         return
 
     dates = dates.sort_index(ascending=False)
@@ -448,7 +473,8 @@ def screen_earn(ticker):
     st.markdown('<div class="block-label">Recent History (Last 12)</div>', unsafe_allow_html=True)
     recent = past.head(12).copy()
     if recent.empty:
-        st.info("NO PAST EARNINGS ON RECORD.")
+        st.info("NO PAST EARNINGS ON RECORD — ONLY AN UPCOMING DATE WAS FOUND.")
+        st.caption(f"SOURCE: {diagnostic}")
         return
 
     table = pd.DataFrame({"Date": [d.strftime("%Y-%m-%d") for d in recent.index]})
@@ -456,7 +482,7 @@ def screen_earn(ticker):
         if col in recent.columns:
             table[col] = recent[col].map(lambda v: f"{v:,.2f}" if pd.notna(v) else "\u2014")
     st.dataframe(table, use_container_width=True, hide_index=True)
-    st.caption("SOURCE: YAHOO FINANCE  |  ESTIMATES CAN CHANGE UNTIL REPORTED")
+    st.caption(f"SOURCE: {diagnostic}  |  ESTIMATES CAN CHANGE UNTIL REPORTED")
 
 
 # --------------------------------------------------------------------------
