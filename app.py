@@ -161,6 +161,26 @@ st.markdown("""
         background-color: #050505; color: #FF8C00;
         border: 1px solid #FF8C00; border-radius: 0px;
     }
+
+    .news-item {
+        padding: 10px 0; border-bottom: 1px solid #2a2a2a;
+    }
+    .news-title {
+        color: #FF8C00 !important; font-size: 0.92rem; font-weight: 600;
+        text-decoration: none;
+    }
+    .news-title:hover { color: #FFB84D !important; text-decoration: underline; }
+    .news-meta {
+        color: #7A5A2E !important; font-size: 0.72rem; margin-top: 2px;
+    }
+
+    div[data-testid="stRadio"] label {
+        color: #FF8C00 !important; font-size: 0.82rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #7A5A2E !important; font-family: 'IBM Plex Mono', monospace;
+    }
+    .stTabs [aria-selected="true"] { color: #FF8C00 !important; }
 </style>
 """, unsafe_allow_html=True)
 
