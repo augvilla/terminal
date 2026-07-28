@@ -42,15 +42,28 @@ def screen_title(text, sub=None):
 @st.cache_data(ttl=300, show_spinner=False)
 def _fetch_snapshot(ticker: str) -> dict:
     t = yf.Ticker(ticker)
-    info = t.info or {}
-    fi = t.fast_info
 
-    price = fi.get("lastPrice")
-    prev_close = fi.get("previousClose")
+    # yfinance raises assorted internal KeyErrors for symbols that do not
+    # exist. Translate anything it throws into one clear message.
+    try:
+        info = t.info or {}
+    except Exception:
+        info = {}
+
+    try:
+        fi = t.fast_info
+        price = fi.get("lastPrice")
+        prev_close = fi.get("previousClose")
+    except Exception:
+        fi, price, prev_close = {}, None, None
+
     if not price or not prev_close:
-        hist = t.history(period="5d")["Close"].dropna()
-        if hist.empty:
-            raise ValueError("no price data found for this symbol")
+        try:
+            hist = t.history(period="5d")["Close"].dropna()
+        except Exception:
+            hist = None
+        if hist is None or hist.empty:
+            raise ValueError("no such symbol, or no price data available")
         price = float(hist.iloc[-1])
         prev_close = float(hist.iloc[-2]) if len(hist) > 1 else price
 
