@@ -120,8 +120,8 @@ def _fmt_num(n, dp=2, suffix=""):
 def screen_snap(ticker: str):
     try:
         d = _fetch_snapshot(ticker)
-    except Exception as e:
-        st.error(f"COULD NOT LOAD {ticker} — {e}")
+    except Exception:
+        st.warning(f"INVALID COMMAND OR TICKER: {ticker}  |  TYPE MENU TO SEE WHAT'S AVAILABLE.")
         return
 
     up = d["change_pct"] > 0
