@@ -100,7 +100,7 @@ def _fetch_snapshot(ticker: str) -> dict:
 
 
 def _fmt_big(n):
-    if n is None:
+    if n is None or (isinstance(n, float) and pd.isna(n)):
         return "—"
     n = float(n)
     for cutoff, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
@@ -258,10 +258,42 @@ def _fetch_financials(ticker):
     }
 
 
-def _format_statement(df, max_rows=25):
+# Yahoo's raw row order is not ranked by importance — minor reconciliation
+# lines (e.g. "Tax Effect Of Unusual Items") often sort ahead of the figures
+# people actually look for. These lists pull the standard headline items to
+# the top; anything not listed still shows, just further down.
+_PRIORITY = {
+    "income": [
+        "Total Revenue", "Cost Of Revenue", "Gross Profit",
+        "Operating Expense", "Operating Income", "EBITDA", "EBIT",
+        "Pretax Income", "Tax Provision", "Net Income",
+        "Basic EPS", "Diluted EPS",
+    ],
+    "balance": [
+        "Total Assets", "Current Assets", "Cash And Cash Equivalents",
+        "Total Liabilities Net Minority Interest", "Current Liabilities",
+        "Total Debt", "Total Equity Gross Minority Interest",
+        "Retained Earnings",
+    ],
+    "cashflow": [
+        "Operating Cash Flow", "Investing Cash Flow", "Financing Cash Flow",
+        "Free Cash Flow", "Capital Expenditure", "Net Income",
+    ],
+}
+
+
+def _reorder_by_priority(df, statement_kind: str):
+    priority = _PRIORITY.get(statement_kind, [])
+    present = [p for p in priority if p in df.index]
+    rest = [i for i in df.index if i not in present]
+    return df.loc[present + rest]
+
+
+def _format_statement(df, statement_kind: str, max_rows=30):
     if df is None or df.empty:
         return pd.DataFrame()
-    out = df.iloc[:max_rows].copy()
+    ordered = _reorder_by_priority(df, statement_kind)
+    out = ordered.iloc[:max_rows].copy()
     out.columns = [c.strftime("%Y-%m") if hasattr(c, "strftime") else str(c) for c in out.columns]
     out = out.map(lambda v: _fmt_big(v) if isinstance(v, (int, float)) else v)
     out.index.name = "Line Item"
@@ -269,7 +301,7 @@ def _format_statement(df, max_rows=25):
 
 
 def screen_books(ticker):
-    screen_title(f"{ticker} \u2014 Financial Statements", "Most recent first")
+    screen_title(f"{ticker} \u2014 Financial Statements", "Key figures first, most recent period first")
 
     try:
         data = _fetch_financials(ticker)
@@ -282,10 +314,10 @@ def screen_books(ticker):
     suffix = "_q" if period == "Quarterly" else ""
 
     tabs = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
-    keys = [f"income{suffix}", f"balance{suffix}", f"cashflow{suffix}"]
-    for tab, key in zip(tabs, keys):
+    kinds = ["income", "balance", "cashflow"]
+    for tab, kind in zip(tabs, kinds):
         with tab:
-            table = _format_statement(data.get(key))
+            table = _format_statement(data.get(f"{kind}{suffix}"), kind)
             if table.empty:
                 st.info("NO DATA AVAILABLE FOR THIS STATEMENT.")
             else:
@@ -301,22 +333,31 @@ def screen_books(ticker):
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_dividends(ticker):
     t = yf.Ticker(ticker)
-    return t.dividends, (t.info or {})
+    info = t.info or {}
+    try:
+        price = t.fast_info.get("lastPrice")
+    except Exception:
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+    return t.dividends, info, price
 
 
 def screen_div(ticker):
     screen_title(f"{ticker} \u2014 Dividends")
 
     try:
-        divs, info = _fetch_dividends(ticker)
+        divs, info, price = _fetch_dividends(ticker)
     except Exception as e:
         st.warning(f"COULD NOT LOAD DIVIDEND DATA FOR {ticker} \u2014 {e}")
         return
 
-    yld = info.get("dividendYield")
-    if yld is not None and yld < 1:
-        yld = yld * 100
     rate = info.get("dividendRate")
+
+    # Yahoo's "dividendYield" field has inconsistently been a fraction
+    # (0.005) or an already-scaled percent (0.5) depending on the ticker
+    # and API version — trusting it directly has produced values off by
+    # 100x. Computing yield from rate / price avoids the ambiguity.
+    yld = (rate / price * 100) if (rate and price) else None
+
     payout = info.get("payoutRatio")
     if payout is not None:
         payout = payout * 100
@@ -366,10 +407,19 @@ def screen_div(ticker):
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_earnings(ticker):
     t = yf.Ticker(ticker)
+    dates = None
     try:
         dates = t.earnings_dates
     except Exception:
-        dates = None
+        pass
+    if dates is None or dates.empty:
+        # The bare property is known to come back empty for some tickers
+        # and yfinance versions even when data exists — the explicit
+        # method call is the more reliable path.
+        try:
+            dates = t.get_earnings_dates(limit=24)
+        except Exception:
+            pass
     return dates
 
 
